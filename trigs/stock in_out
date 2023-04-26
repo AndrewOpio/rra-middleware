@@ -1,0 +1,219 @@
+CREATE OR REPLACE TRIGGER SAVE_STOCK 
+AFTER INSERT ON MONTH_SUMMARY
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_stock';
+
+  item_code VARCHAR2(256);
+  item_name VARCHAR2(256);
+  bar_code VARCHAR2(256);
+  package_unit_code VARCHAR2(256);
+  quantity_unit_code VARCHAR2(256);
+  invoice_number VARCHAR2(256);
+  snr_type_code VARCHAR2(256);
+  discount VARCHAR2(256) := 0;
+
+BEGIN
+    invoice_number := REGEXP_REPLACE(:new.VC_DOCUMENT_NO, '[^0-9]+', '');
+    
+    SELECT
+        vc_rra_product_code,
+        vc_product_name,
+        vc_barcode1,
+        VC_RRA_PACK,
+        VC_RRA_CARTON
+    INTO
+        item_code,
+        item_name,
+        bar_code,
+        quantity_unit_code,
+        package_unit_code
+    FROM
+        sales.mst_product
+    WHERE
+        VC_PRODUCT_CODE = :new.VC_ITEM_CODE AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+    IF :new.CH_ADD_SUB = 'S' AND :new.CH_TRAN_FLAG = 'D' THEN  
+
+        invoice_number := TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(REPLACE(:new.VC_DOCUMENT_NO, 'AP', '00'), 1, INSTR(REPLACE(:new.VC_DOCUMENT_NO, 'AP', '00'), '/')-1)));
+        
+        SELECT
+            nu_discount
+
+        INTO
+            discount
+            
+        FROM
+            sales.DT_INVOICE
+        WHERE
+           VC_INVOICE_NO = :new.VC_DOCUMENT_NO
+        AND
+           DT_INVOICE_DATE = :new.DT_DOCUMENT_DATE 
+        AND 
+           VC_PRODUCT_CODE = :new.VC_ITEM_CODE
+        AND
+           VC_COMP_CODE = :new.VC_COMP_CODE;
+        
+    END IF;
+
+    IF :new.CH_ADD_SUB = 'S' THEN
+       snr_type_code := '16';
+    END IF;
+    
+    IF :new.CH_ADD_SUB = 'A' THEN
+       snr_type_code := '06';
+    END IF;
+
+
+    data := '{
+        "tin":"999976940",
+        "bhfId": "00",
+        "sarNo":"'|| REGEXP_REPLACE(:new.VC_DOCUMENT_NO, '[^0-9]+', '0') ||'",
+        "orgSarNo":"'|| REGEXP_REPLACE(:new.VC_DOCUMENT_NO, '[^0-9]+', '0') ||'",
+        "regTyCd":"M",
+        "custTin":null,
+        "custNm":null,
+        "custBhfId":null,
+        "sarTyCd":"'|| snr_type_code ||'",
+        "ocrnDt":"'|| TO_CHAR(:new.dt_document_date, 'YYYYMMDD')||'",
+        "totItemCnt":"1",
+        "totTaxblAmt":"'|| :new.nu_value ||'",
+        "totTaxAmt":"0",
+        "totAmt":"'|| :new.nu_value ||'",
+        "remark":null,
+        "regrId":"Admin",
+        "regrNm":"Admin",
+        "modrNm":"Admin",
+        "modrId":"Admin",
+        "itemList":[{
+            "itemSeq":"1",
+            "itemCd":"'|| item_code ||'",
+            "itemClsCd":"80141700",
+            "itemNm":"'|| item_name ||'",
+            "bcd":"'|| bar_code ||'",
+            "pkgUnitCd":"'|| package_unit_code ||'",
+            "pkg":"0",
+            "qtyUnitCd":"'|| quantity_unit_code ||'",
+            "qty":"'|| :new.nu_qty ||'",
+            "itemExprDt":null,
+            "prc":"'|| (:new.nu_value / :new.nu_qty) ||'",
+            "splyAmt":"'|| :new.nu_qty ||'",
+            "totDcAmt":"'|| (discount / 100) * :new.nu_value ||'"",
+            "taxblAmt":"'|| :new.nu_value ||'",
+            "taxTyCd":"C",
+            "taxAmt":"0",
+            "totAmt":"'|| :new.nu_value ||'"
+        }]
+    }';
+
+    
+    req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+    utl_http.set_header(req, 'content-type', 'application/json');
+    utl_http.set_header(req, 'Content-Length', length(data));
+    
+    utl_http.write_text(req, data);
+    res := utl_http.get_response(req);
+
+    utl_http.read_text(res, res_text);
+    json_obj := json_object_t(res_text);
+    utl_http.end_response(res);
+
+    code :=  json_obj.get_string('resultCd');
+    message :=  json_obj.get_string('resultMsg');
+    res_date :=  json_obj.get_string('resultDt');
+    
+    timestamp :=  json_obj.get_string('timestamp');
+    status :=  json_obj.get_string('status');
+    error :=  json_obj.get_string('error');
+      
+    INSERT INTO RRA_STOCK_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES (code, message, res_date, timestamp, status, error, data);      
+END;
+
+
+
+REPLACE(:new.VC_DOCUMENT_NO, 'WBT', '000')
+
+    SELECT
+        vc_product_code,
+        vc_classification,
+        vc_product_name,
+        vc_barcode1
+    INTO
+        item_code,
+        item_classification_code,
+        item_name,
+        bar_code
+    FROM
+        sales.mst_product
+    WHERE
+        VC_PRODUCT_CODE = :new.VC_ITEM_CODE AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+    data := '{
+        "tin":"999976940",
+        "bhfId": "00",
+        "sarNo":"'|| :new.vc_wh_code ||'",
+        "orgSarNo":"'|| :new.vc_wh_code ||'",
+        "regTyCd":"M",
+        "custTin":null,
+        "custNm":null,
+        "custBhfId":null,
+        "sarTyCd":"11",
+        "ocrnDt":"'|| TO_CHAR(:new.dt_adj_date, 'YYYYMMDD')||'",
+        "totItemCnt":"1",
+        "totTaxblAmt":"'|| :new.nu_adj_qty*:new.nu_cost ||'",
+        "totTaxAmt":"0",
+        "totAmt":"'|| :new.nu_adj_qty*:new.nu_cost ||'",
+        "remark":null,
+        "regrId":"Admin",
+        "regrNm":"Admin",
+        "modrNm":"Admin",
+        "modrId":"Admin",
+        "itemList":[{
+            "itemSeq":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_ITEM_CODE,5,6))) ||'",
+            "itemCd":"'|| item_code ||'",
+            "itemClsCd":"'|| item_classification_code ||'",
+            "itemNm":"'|| item_name ||'",
+            "bcd":"'|| bar_code ||'",
+            "pkgUnitCd":"CT",
+            "pkg":"33",
+            "qtyUnitCd":"PA",
+            "qty":"'|| :new.nu_adj_qty ||'",
+            "itemExprDt":null,
+            "prc":"'|| :new.nu_cost ||'",
+            "splyAmt":"'|| :new.nu_adj_qty*:new.nu_cost ||'",
+            "totDcAmt":"'|| (discount / 100) * (:new.nu_adj_qty*:new.nu_cost) ||'"",
+            "taxblAmt":"'|| :new.nu_adj_qty*:new.nu_cost ||'",
+            "taxTyCd":"C",
+            "taxAmt":"0",
+            "totAmt":"'|| :new.nu_adj_qty*:new.nu_cost ||'"
+        }]
+    }';
+    
+
+    
+
+    
+    quantity VARCHAR2(256) := 0;
+
+
+    FOR item IN(SELECT * FROM STK_LOT_SUMMARY WHERE VC_ITEM_CODE = :new.VC_ITEM_CODE)
+        LOOP
+          quantity := quantity + :new.NU_BALANCE_QTY;
+        END LOOP;
+
+
+

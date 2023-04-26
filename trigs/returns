@@ -1,0 +1,1039 @@
+CREATE OR REPLACE TRIGGER NORMAL_SALES_RETURN 
+AFTER INSERT ON DT_SALES_RET 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  res_text  VARCHAR2(32767);
+  json_obj json_object_t;
+  code  VARCHAR2(256);
+  message  VARCHAR2(256);
+  res_date  VARCHAR2(256);
+  transaction_data json_object_t;
+  rcptNo INTEGER;
+  intrlData VARCHAR2(256);
+  rcptSign VARCHAR2(256);
+  totRcptNo INTEGER;
+  vsdcRcptPbctDate VARCHAR2(256);
+  sdcId VARCHAR2(256);
+  mrcNo VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_sales_transaction';
+
+  invoice_no  VARCHAR2(256);
+  customer_code VARCHAR2(256);
+  customer_name VARCHAR2(256);
+  customer_tin VARCHAR2(256);
+  customer_trade_name VARCHAR2(256);
+  customer_address VARCHAR2(256);
+  customer_contact VARCHAR2(256);
+  c_date VARCHAR2(256);
+  r_date VARCHAR2(256);
+  s_date VARCHAR2(256);
+  dt_invoice_date VARCHAR2(256);
+  taxable_amount VARCHAR2(256);
+  tax_amount VARCHAR2(256);
+  item_code VARCHAR2(256);
+  item_name VARCHAR2(256);
+  item_classification VARCHAR2(256);
+  bar_code VARCHAR2(256);
+  quantity VARCHAR2(256);
+  unit_price VARCHAR2(256);
+  discount VARCHAR2(256);
+  freight_value VARCHAR2(256);
+
+BEGIN
+  SELECT
+    vc_invoice_no,
+    nu_customer_code,
+    TO_CHAR(dt_grn_date, 'YYYYMMDDHH24MISS'),
+    TO_CHAR(dt_invoice_date, 'YYYYMMDDHH24MISS')
+
+  INTO
+    invoice_no,
+    customer_code,
+    c_date,
+    r_date
+  FROM
+    HD_SALES_RET
+  WHERE
+    VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+  SELECT
+    TO_CHAR(dt_invoice_date, 'YYYYMMDD')
+
+  INTO
+    s_date
+  FROM
+    HD_SALES_RET
+  WHERE
+    VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+  SELECT
+    vc_vat_no,
+    vc_CUSTOMER_NAME,
+    VC_TELEPHONE,
+    VC_CATEGORY_CODE,
+    VC_BILL_ADDRESS1
+  INTO
+    customer_tin,
+    customer_name,
+    customer_contact,
+    customer_trade_name,
+    customer_address 
+  FROM
+    MST_CUSTOMER
+  WHERE
+    NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  SELECT
+    dt_invoice_date
+
+  INTO
+    dt_invoice_date
+  FROM
+    HD_SALES_RET
+  WHERE
+    VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+  SELECT
+    NU_FREIGHT_VALUE
+  INTO
+    freight_value
+  FROM
+    HD_INVOICE
+  WHERE
+    VC_INVOICE_NO = invoice_no AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_INVOICE_DATE = dt_invoice_date;
+
+
+  SELECT
+    NU_ORDER_QTY_VAL,
+    NU_PRODUCT_QUANTITY,
+    NU_PRODUCT_RATE,
+    NU_DISCOUNT
+    
+  INTO
+    taxable_amount,
+    quantity,
+    unit_price,
+    discount
+    
+  FROM
+    DT_INVOICE
+  WHERE
+    VC_INVOICE_NO = invoice_no AND VC_COMP_CODE=:new.VC_COMP_CODE AND VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND DT_INVOICE_DATE = dt_invoice_date;
+  
+  
+  SELECT 
+     VC_PRODUCT_NAME,
+     VC_PRODUCT_CODE,
+     VC_CLASSIFICATION,
+     VC_BARCODE1
+     
+  INTO
+     item_name,
+     item_code,
+     item_classification,
+     bar_code
+  FROM 
+     MST_PRODUCT 
+  WHERE 
+     VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND VC_COMP_CODE=:new.VC_COMP_CODE;
+
+
+  data := '{
+    "tin":"999976940",
+    "bhfId": "00",
+    "invcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+    "orgInvcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+    "custTin":"'|| customer_tin ||'",
+    "custNm":"'|| customer_name ||'",
+    "salesTyCd":"N",
+    "rcptTyCd":"R",
+    "pmtTyCd":"02",
+    "salesSttsCd":"05",
+    "cfmDt":"'|| c_date ||'",
+    "salesDt":"'||s_date ||'",
+    "stockRlsDt":"'|| r_date ||'",
+    "cnclReqDt":null,
+    "cnclDt":null,
+    "rfdDt":null,
+    "rfdRsnCd":null,
+    "totItemCnt":"1",
+    "taxblAmtA":"0",
+    "taxblAmtB":"0",
+    "taxblAmtC":"'|| taxable_amount ||'",
+    "taxblAmtD":"0",
+    "taxRtA":"0",
+    "taxRtB":"0",
+    "taxRtC":"0",
+    "taxRtD":"0",
+    "taxAmtA":"0",
+    "taxAmtB":"0",
+    "taxAmtC":"0",
+    "taxAmtD":"0",
+    "totTaxblAmt":"'|| taxable_amount ||'",
+    "totTaxAmt":"0",
+    "totAmt":"'|| taxable_amount ||'",
+    "prchrAcptcYn":"N",
+    "remark":null,
+    "regrId":"Admin",
+    "regrNm":"Admin",
+    "modrId":"Admin",
+    "modrNm":"Admin",
+    "receipt":{
+        "custTin":"'|| customer_tin ||'",
+        "custMblNo":"'|| customer_contact ||'",
+        "rptNo":null,
+        "trdeNm":"'|| customer_trade_name ||'",
+        "adrs":"'|| customer_address ||'",
+        "topMsg":null,
+        "btmMsg":null,
+        "prchrAcptcYn":"N"
+    },
+    "itemList":[{
+        "itemSeq":"'||TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_PRODUCT_CODE,5,6))) || '",
+        "itemCd":"'|| item_code || '",
+        "itemClsCd":"'|| item_classification ||'",
+        "itemNm":"'|| item_name ||'",
+        "bcd":"'|| bar_code ||'",
+        "pkgUnitCd":"CT",
+        "pkg":"33",
+        "qtyUnitCd":"PA",
+        "qty":"'|| quantity ||'",
+        "prc":"'|| unit_price ||'",
+        "splyAmt":"'|| freight_value ||'",
+        "dcRt":"'|| discount ||'",
+        "dcAmt":"'|| (discount / 100) * (unit_price*quantity) ||'",
+        "isrccCd":null,
+        "isrccNm":null,
+        "isrcRt":null,
+        "isrcAmt":null,
+        "taxTyCd":"C",
+        "taxblAmt":"'|| taxable_amount ||'",
+        "taxAmt":"0",
+        "totAmt":"'|| taxable_amount ||'"
+    }]
+  }'; 
+  
+  req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  utl_http.set_header(req, 'Content-Length', length(data));
+  
+  utl_http.write_text(req, data);
+  res := utl_http.get_response(req);
+
+  utl_http.read_text(res, res_text);
+  json_obj := json_object_t(res_text);
+  
+  code :=  json_obj.get_string('resultCd');
+  message :=  json_obj.get_string('resultMsg');
+  res_date :=  json_obj.get_string('resultDt');
+  transaction_data :=  json_obj.get_Object('data');
+  rcptNo :=  transaction_data.get_Number('rcptNo');
+  intrlData :=  transaction_data.get_string('intrlData');
+  rcptSign :=  transaction_data.get_string('rcptSign');
+  totRcptNo :=  transaction_data.get_Number('totRcptNo');
+  vsdcRcptPbctDate :=  transaction_data.get_string('vsdcRcptPbctDate');
+  sdcId :=  transaction_data.get_string('sdcId');
+  mrcNo :=  transaction_data.get_string('mrcNo');
+
+  timestamp :=  json_obj.get_string('timestamp');
+  status :=  json_obj.get_string('status');
+  error :=  json_obj.get_string('error');
+
+  INSERT INTO RRA_NORMAL_SALES_RET_RES (CODE, MSG, DTE, RCPTNO, INTRLDATA, RCPTSIGN, TOTRCPTNO, VSDCRCPTPBCTDATE, SDCID, MRCNO, TIMESTAMP, STATUS, ERROR, JSON)
+  VALUES(code, message, res_date, rcptNo, intrlData, rcptSign, totRcptNo, vsdcRcptPbctDate, sdcId, timestamp, mrcNo, status, error, data);
+  
+  utl_http.end_response(res);
+
+END;
+
+
+
+---Copy return-----
+
+CREATE OR REPLACE TRIGGER COPY_SALES_RETURN 
+AFTER INSERT ON DT_SALES_RET 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  res_text  VARCHAR2(32767);
+  json_obj json_object_t;
+  code  VARCHAR2(256);
+  message  VARCHAR2(256);
+  res_date  VARCHAR2(256);
+  transaction_data json_object_t;
+  rcptNo INTEGER;
+  intrlData VARCHAR2(256);
+  rcptSign VARCHAR2(256);
+  totRcptNo INTEGER;
+  vsdcRcptPbctDate VARCHAR2(256);
+  sdcId VARCHAR2(256);
+  mrcNo VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_sales_transaction';
+
+  invoice_no  VARCHAR2(256);
+  customer_code VARCHAR2(256);
+  customer_name VARCHAR2(256);
+  customer_tin VARCHAR2(256);
+  customer_trade_name VARCHAR2(256);
+  customer_address VARCHAR2(256);
+  customer_contact VARCHAR2(256);
+  c_date VARCHAR2(256);
+  r_date VARCHAR2(256);
+  s_date VARCHAR2(256);
+  dt_invoice_date VARCHAR2(256);
+  taxable_amount VARCHAR2(256);
+  tax_amount VARCHAR2(256);
+  item_code VARCHAR2(256);
+  item_name VARCHAR2(256);
+  item_classification VARCHAR2(256);
+  bar_code VARCHAR2(256);
+  quantity VARCHAR2(256);
+  unit_price VARCHAR2(256);
+  discount VARCHAR2(256);
+  freight_value VARCHAR2(256);
+
+BEGIN
+  SELECT
+    vc_invoice_no,
+    nu_customer_code,
+    TO_CHAR(dt_grn_date, 'YYYYMMDDHH24MISS'),
+    TO_CHAR(dt_invoice_date, 'YYYYMMDDHH24MISS')
+
+  INTO
+    invoice_no,
+    customer_code,
+    c_date,
+    r_date
+  FROM
+    HD_SALES_RET
+  WHERE
+    VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+  SELECT
+    TO_CHAR(dt_invoice_date, 'YYYYMMDD')
+
+  INTO
+    s_date
+  FROM
+    HD_SALES_RET
+  WHERE
+    VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+  SELECT
+    vc_vat_no,
+    vc_CUSTOMER_NAME,
+    VC_TELEPHONE,
+    VC_CATEGORY_CODE,
+    VC_BILL_ADDRESS1
+  INTO
+    customer_tin,
+    customer_name,
+    customer_contact,
+    customer_trade_name,
+    customer_address 
+  FROM
+    MST_CUSTOMER
+  WHERE
+    NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  SELECT
+    dt_invoice_date
+
+  INTO
+    dt_invoice_date
+  FROM
+    HD_SALES_RET
+  WHERE
+    VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+  SELECT
+    NU_FREIGHT_VALUE
+  INTO
+    freight_value
+  FROM
+    HD_INVOICE
+  WHERE
+    VC_INVOICE_NO = invoice_no AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_INVOICE_DATE = dt_invoice_date;
+
+
+  SELECT
+    NU_ORDER_QTY_VAL,
+    NU_PRODUCT_QUANTITY,
+    NU_PRODUCT_RATE,
+    NU_DISCOUNT
+    
+  INTO
+    taxable_amount,
+    quantity,
+    unit_price,
+    discount
+    
+  FROM
+    DT_INVOICE
+  WHERE
+    VC_INVOICE_NO = invoice_no AND VC_COMP_CODE=:new.VC_COMP_CODE AND VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND DT_INVOICE_DATE = dt_invoice_date;
+  
+  
+  SELECT 
+     VC_PRODUCT_NAME,
+     VC_PRODUCT_CODE,
+     VC_CLASSIFICATION,
+     VC_BARCODE1
+     
+  INTO
+     item_name,
+     item_code,
+     item_classification,
+     bar_code
+  FROM 
+     MST_PRODUCT 
+  WHERE 
+     VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND VC_COMP_CODE=:new.VC_COMP_CODE;
+
+
+  data := '{
+    "tin":"999976940",
+    "bhfId": "00",
+    "invcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+    "orgInvcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+    "custTin":"'|| customer_tin ||'",
+    "custNm":"'|| customer_name ||'",
+    "salesTyCd":"C",
+    "rcptTyCd":"R",
+    "pmtTyCd":"02",
+    "salesSttsCd":"05",
+    "cfmDt":"'|| c_date ||'",
+    "salesDt":"'||s_date ||'",
+    "stockRlsDt":"'|| r_date ||'",
+    "cnclReqDt":null,
+    "cnclDt":null,
+    "rfdDt":null,
+    "rfdRsnCd":null,
+    "totItemCnt":"1",
+    "taxblAmtA":"0",
+    "taxblAmtB":"0",
+    "taxblAmtC":"'|| taxable_amount ||'",
+    "taxblAmtD":"0",
+    "taxRtA":"0",
+    "taxRtB":"0",
+    "taxRtC":"0",
+    "taxRtD":"0",
+    "taxAmtA":"0",
+    "taxAmtB":"0",
+    "taxAmtC":"0",
+    "taxAmtD":"0",
+    "totTaxblAmt":"'|| taxable_amount ||'",
+    "totTaxAmt":"0",
+    "totAmt":"'|| taxable_amount ||'",
+    "prchrAcptcYn":"N",
+    "remark":null,
+    "regrId":"Admin",
+    "regrNm":"Admin",
+    "modrId":"Admin",
+    "modrNm":"Admin",
+    "receipt":{
+        "custTin":"'|| customer_tin ||'",
+        "custMblNo":"'|| customer_contact ||'",
+        "rptNo":null,
+        "trdeNm":"'|| customer_trade_name ||'",
+        "adrs":"'|| customer_address ||'",
+        "topMsg":null,
+        "btmMsg":null,
+        "prchrAcptcYn":"N"
+    },
+    "itemList":[{
+        "itemSeq":"'||TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_PRODUCT_CODE,5,6))) || '",
+        "itemCd":"'|| item_code || '",
+        "itemClsCd":"'|| item_classification ||'",
+        "itemNm":"'|| item_name ||'",
+        "bcd":"'|| bar_code ||'",
+        "pkgUnitCd":"CT",
+        "pkg":"33",
+        "qtyUnitCd":"PA",
+        "qty":"'|| quantity ||'",
+        "prc":"'|| unit_price ||'",
+        "splyAmt":"'|| freight_value ||'",
+        "dcRt":"'|| discount ||'",
+        "dcAmt":"'|| (discount / 100) * (unit_price*quantity) ||'",
+        "isrccCd":null,
+        "isrccNm":null,
+        "isrcRt":null,
+        "isrcAmt":null,
+        "taxTyCd":"C",
+        "taxblAmt":"'|| taxable_amount ||'",
+        "taxAmt":"0",
+        "totAmt":"'|| taxable_amount ||'"
+    }]
+  }'; 
+  
+  req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  utl_http.set_header(req, 'Content-Length', length(data));
+  
+  utl_http.write_text(req, data);
+  res := utl_http.get_response(req);
+
+  utl_http.read_text(res, res_text);
+  json_obj := json_object_t(res_text);
+  
+  code :=  json_obj.get_string('resultCd');
+  message :=  json_obj.get_string('resultMsg');
+  res_date :=  json_obj.get_string('resultDt');
+  transaction_data :=  json_obj.get_Object('data');
+  rcptNo :=  transaction_data.get_Number('rcptNo');
+  intrlData :=  transaction_data.get_string('intrlData');
+  rcptSign :=  transaction_data.get_string('rcptSign');
+  totRcptNo :=  transaction_data.get_Number('totRcptNo');
+  vsdcRcptPbctDate :=  transaction_data.get_string('vsdcRcptPbctDate');
+  sdcId :=  transaction_data.get_string('sdcId');
+  mrcNo :=  transaction_data.get_string('mrcNo');
+
+  timestamp :=  json_obj.get_string('timestamp');
+  status :=  json_obj.get_string('status');
+  error :=  json_obj.get_string('error');
+
+  INSERT INTO RRA_COPY_SALES_RET_RES (CODE, MSG, DTE, RCPTNO, INTRLDATA, RCPTSIGN, TOTRCPTNO, VSDCRCPTPBCTDATE, SDCID, MRCNO, TIMESTAMP, STATUS, ERROR, JSON)
+  VALUES(code, message, res_date, rcptNo, intrlData, rcptSign, totRcptNo, vsdcRcptPbctDate, sdcId, timestamp, mrcNo, status, error, data);
+  
+  utl_http.end_response(res);
+
+END;
+
+
+---Proforma return-----
+
+CREATE OR REPLACE TRIGGER PROFORMA_SALES_RETURN 
+AFTER INSERT ON DT_SALES_RET 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  res_text  VARCHAR2(32767);
+  json_obj json_object_t;
+  code  VARCHAR2(256);
+  message  VARCHAR2(256);
+  res_date  VARCHAR2(256);
+  transaction_data json_object_t;
+  rcptNo INTEGER;
+  intrlData VARCHAR2(256);
+  rcptSign VARCHAR2(256);
+  totRcptNo INTEGER;
+  vsdcRcptPbctDate VARCHAR2(256);
+  sdcId VARCHAR2(256);
+  mrcNo VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_sales_transaction';
+
+  invoice_no  VARCHAR2(256);
+  customer_code VARCHAR2(256);
+  customer_name VARCHAR2(256);
+  customer_tin VARCHAR2(256);
+  customer_trade_name VARCHAR2(256);
+  customer_address VARCHAR2(256);
+  customer_contact VARCHAR2(256);
+  c_date VARCHAR2(256);
+  r_date VARCHAR2(256);
+  s_date VARCHAR2(256);
+  dt_invoice_date VARCHAR2(256);
+  taxable_amount VARCHAR2(256);
+  tax_amount VARCHAR2(256);
+  item_code VARCHAR2(256);
+  item_name VARCHAR2(256);
+  item_classification VARCHAR2(256);
+  bar_code VARCHAR2(256);
+  quantity VARCHAR2(256);
+  unit_price VARCHAR2(256);
+  discount VARCHAR2(256);
+  freight_value VARCHAR2(256);
+
+BEGIN
+  SELECT
+    vc_invoice_no,
+    nu_customer_code,
+    TO_CHAR(dt_grn_date, 'YYYYMMDDHH24MISS'),
+    TO_CHAR(dt_invoice_date, 'YYYYMMDDHH24MISS')
+
+  INTO
+    invoice_no,
+    customer_code,
+    c_date,
+    r_date
+  FROM
+    HD_SALES_RET
+  WHERE
+    VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+  SELECT
+    TO_CHAR(dt_invoice_date, 'YYYYMMDD')
+
+  INTO
+    s_date
+  FROM
+    HD_SALES_RET
+  WHERE
+    VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+  SELECT
+    vc_vat_no,
+    vc_CUSTOMER_NAME,
+    VC_TELEPHONE,
+    VC_CATEGORY_CODE,
+    VC_BILL_ADDRESS1
+  INTO
+    customer_tin,
+    customer_name,
+    customer_contact,
+    customer_trade_name,
+    customer_address 
+  FROM
+    MST_CUSTOMER
+  WHERE
+    NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  SELECT
+    dt_invoice_date
+
+  INTO
+    dt_invoice_date
+  FROM
+    HD_SALES_RET
+  WHERE
+    VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+  SELECT
+    NU_FREIGHT_VALUE
+  INTO
+    freight_value
+  FROM
+    HD_INVOICE
+  WHERE
+    VC_INVOICE_NO = invoice_no AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_INVOICE_DATE = dt_invoice_date;
+
+
+  SELECT
+    NU_ORDER_QTY_VAL,
+    NU_PRODUCT_QUANTITY,
+    NU_PRODUCT_RATE,
+    NU_DISCOUNT
+    
+  INTO
+    taxable_amount,
+    quantity,
+    unit_price,
+    discount
+    
+  FROM
+    DT_INVOICE
+  WHERE
+    VC_INVOICE_NO = invoice_no AND VC_COMP_CODE=:new.VC_COMP_CODE AND VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND DT_INVOICE_DATE = dt_invoice_date;
+  
+  
+  SELECT 
+     VC_PRODUCT_NAME,
+     VC_PRODUCT_CODE,
+     VC_CLASSIFICATION,
+     VC_BARCODE1
+     
+  INTO
+     item_name,
+     item_code,
+     item_classification,
+     bar_code
+  FROM 
+     MST_PRODUCT 
+  WHERE 
+     VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND VC_COMP_CODE=:new.VC_COMP_CODE;
+
+
+  data := '{
+    "tin":"999976940",
+    "bhfId": "00",
+    "invcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+    "orgInvcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+    "custTin":"'|| customer_tin ||'",
+    "custNm":"'|| customer_name ||'",
+    "salesTyCd":"P",
+    "rcptTyCd":"R",
+    "pmtTyCd":"02",
+    "salesSttsCd":"05",
+    "cfmDt":"'|| c_date ||'",
+    "salesDt":"'||s_date ||'",
+    "stockRlsDt":"'|| r_date ||'",
+    "cnclReqDt":null,
+    "cnclDt":null,
+    "rfdDt":null,
+    "rfdRsnCd":null,
+    "totItemCnt":"1",
+    "taxblAmtA":"0",
+    "taxblAmtB":"0",
+    "taxblAmtC":"'|| taxable_amount ||'",
+    "taxblAmtD":"0",
+    "taxRtA":"0",
+    "taxRtB":"0",
+    "taxRtC":"0",
+    "taxRtD":"0",
+    "taxAmtA":"0",
+    "taxAmtB":"0",
+    "taxAmtC":"0",
+    "taxAmtD":"0",
+    "totTaxblAmt":"'|| taxable_amount ||'",
+    "totTaxAmt":"0",
+    "totAmt":"'|| taxable_amount ||'",
+    "prchrAcptcYn":"N",
+    "remark":null,
+    "regrId":"Admin",
+    "regrNm":"Admin",
+    "modrId":"Admin",
+    "modrNm":"Admin",
+    "receipt":{
+        "custTin":"'|| customer_tin ||'",
+        "custMblNo":"'|| customer_contact ||'",
+        "rptNo":null,
+        "trdeNm":"'|| customer_trade_name ||'",
+        "adrs":"'|| customer_address ||'",
+        "topMsg":null,
+        "btmMsg":null,
+        "prchrAcptcYn":"N"
+    },
+    "itemList":[{
+        "itemSeq":"'||TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_PRODUCT_CODE,5,6))) || '",
+        "itemCd":"'|| item_code || '",
+        "itemClsCd":"'|| item_classification ||'",
+        "itemNm":"'|| item_name ||'",
+        "bcd":"'|| bar_code ||'",
+        "pkgUnitCd":"CT",
+        "pkg":"33",
+        "qtyUnitCd":"PA",
+        "qty":"'|| quantity ||'",
+        "prc":"'|| unit_price ||'",
+        "splyAmt":"'|| freight_value ||'",
+        "dcRt":"'|| discount ||'",
+        "dcAmt":"'|| (discount / 100) * (unit_price*quantity) ||'",
+        "isrccCd":null,
+        "isrccNm":null,
+        "isrcRt":null,
+        "isrcAmt":null,
+        "taxTyCd":"C",
+        "taxblAmt":"'|| taxable_amount ||'",
+        "taxAmt":"0",
+        "totAmt":"'|| taxable_amount ||'"
+    }]
+  }'; 
+  
+  req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  utl_http.set_header(req, 'Content-Length', length(data));
+  
+  utl_http.write_text(req, data);
+  res := utl_http.get_response(req);
+
+  utl_http.read_text(res, res_text);
+  json_obj := json_object_t(res_text);
+  
+  code :=  json_obj.get_string('resultCd');
+  message :=  json_obj.get_string('resultMsg');
+  res_date :=  json_obj.get_string('resultDt');
+  transaction_data :=  json_obj.get_Object('data');
+  rcptNo :=  transaction_data.get_Number('rcptNo');
+  intrlData :=  transaction_data.get_string('intrlData');
+  rcptSign :=  transaction_data.get_string('rcptSign');
+  totRcptNo :=  transaction_data.get_Number('totRcptNo');
+  vsdcRcptPbctDate :=  transaction_data.get_string('vsdcRcptPbctDate');
+  sdcId :=  transaction_data.get_string('sdcId');
+  mrcNo :=  transaction_data.get_string('mrcNo');
+
+  timestamp :=  json_obj.get_string('timestamp');
+  status :=  json_obj.get_string('status');
+  error :=  json_obj.get_string('error');
+
+  INSERT INTO RRA_PROFORMA_SALES_RET_RES (CODE, MSG, DTE, RCPTNO, INTRLDATA, RCPTSIGN, TOTRCPTNO, VSDCRCPTPBCTDATE, SDCID, MRCNO, TIMESTAMP, STATUS, ERROR, JSON)
+  VALUES(code, message, res_date, rcptNo, intrlData, rcptSign, totRcptNo, vsdcRcptPbctDate, sdcId, timestamp, mrcNo, status, error, data);
+  
+  utl_http.end_response(res);
+
+END;
+
+
+
+
+
+
+
+create or replace TRIGGER NORMAL_SALES_RETURN 
+AFTER INSERT OR UPDATE ON HD_SALES_RET 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  res_text  VARCHAR2(32767);
+  json_obj json_object_t;
+  code  VARCHAR2(256);
+  message  VARCHAR2(256);
+  res_date  VARCHAR2(256);
+  transaction_data json_object_t;
+  rcptNo INTEGER;
+  intrlData VARCHAR2(256);
+  rcptSign VARCHAR2(256);
+  totRcptNo INTEGER;
+  vsdcRcptPbctDate VARCHAR2(256);
+  sdcId VARCHAR2(256);
+  mrcNo VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_sales_transaction';
+
+  customer_code VARCHAR2(256);
+  customer_name VARCHAR2(256);
+  customer_tin VARCHAR2(256);
+  customer_trade_name VARCHAR2(256);
+  customer_address VARCHAR2(256);
+  customer_contact VARCHAR2(256);
+  c_date VARCHAR2(256);
+  r_date VARCHAR2(256);
+  s_date VARCHAR2(256);
+  payment_mode VARCHAR2(256);
+  payment_type VARCHAR2(256);
+  total_amount NUMBER := 0;
+
+  quantity NUMBER := 0;
+  counter NUMBER := 1;
+
+  item_list varchar2(4000);
+  single_item varchar2(4000);
+
+BEGIN
+  SELECT
+    vc_vat_no,
+    vc_CUSTOMER_NAME,
+    VC_TELEPHONE,
+    VC_CATEGORY_CODE,
+    VC_BILL_ADDRESS1
+  INTO
+    customer_tin,
+    customer_name,
+    customer_contact,
+    customer_trade_name,
+    customer_address 
+  FROM
+    MST_CUSTOMER
+  WHERE
+    NU_CUSTOMER_CODE = :new.nu_customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  SELECT
+    VC_MODE
+
+  INTO
+    payment_mode
+  FROM
+    HD_INVOICE
+  WHERE
+    VC_INVOICE_NO = :vc_invoice_no AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_INVOICE_DATE = :new.dt_invoice_date;
+
+
+  FOR item IN(SELECT * FROM DT_SALES_RET WHERE VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE = :new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE)
+  LOOP
+      quantity := quantity + 1; 
+  END LOOP;
+
+  FOR item IN(
+  SELECT
+      A.nu_qty_returned,
+      A.nu_product_rate,
+      A.nu_total,
+      A.VC_PRODUCT_CODE,
+      A.NU_DISCOUNT,
+      B.VC_PRODUCT_NAME,
+      B.VC_CLASSIFICATION,
+      B.VC_BARCODE1
+  FROM
+      DT_SALES_RET A, MST_PRODUCT B
+  WHERE
+      A.VC_GRN_NO = :new.VC_GRN_NO AND A.VC_COMP_CODE = :new.VC_COMP_CODE AND A.DT_GRN_DATE = :new.DT_GRN_DATE AND B.VC_PRODUCT_CODE=A.VC_PRODUCT_CODE AND B.VC_COMP_CODE = A.VC_COMP_CODE)
+  
+  LOOP
+      total_amount := total_amount + item.nu_total;
+      IF counter = quantity THEN
+          single_item := '{
+              "itemSeq":"'||TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(item.VC_PRODUCT_CODE,5,6))) || '",
+              "itemCd":"'|| item.VC_PRODUCT_CODE || '",
+              "itemClsCd":"'|| item.VC_CLASSIFICATION ||'",
+              "itemNm":"'|| item.VC_PRODUCT_NAME ||'",
+              "bcd":"'|| item.VC_BARCODE1 ||'",
+              "pkgUnitCd":"CT",
+              "pkg":"33",
+              "qtyUnitCd":"PA",
+              "qty":"'|| item.nu_qty_returned ||'",
+              "prc":"'|| item.nu_product_rate ||'",
+              "splyAmt":"'|| item.nu_product_rate*item.nu_qty_returned ||'",
+              "dcRt":"'|| item.NU_DISCOUNT ||'",
+              "dcAmt":"'|| (item.NU_DISCOUNT / 100) * (item.nu_product_rate*item.nu_qty_returned) ||'",
+              "isrccCd":null,
+              "isrccNm":null,
+              "isrcRt":null,
+              "isrcAmt":null,
+              "taxTyCd":"C",
+              "taxblAmt":"'|| item.nu_total ||'",
+              "taxAmt":"0",
+              "totAmt":"'|| item.nu_total ||'"
+          }';
+
+      ELSE   
+          single_item := '{
+              "itemSeq":"'||TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(item.VC_PRODUCT_CODE,5,6))) || '",
+              "itemCd":"'|| item.VC_PRODUCT_CODE || '",
+              "itemClsCd":"'|| item.VC_CLASSIFICATION ||'",
+              "itemNm":"'|| item.VC_PRODUCT_NAME ||'",
+              "bcd":"'|| item.VC_BARCODE1 ||'",
+              "pkgUnitCd":"CT",
+              "pkg":"33",
+              "qtyUnitCd":"PA",
+              "qty":"'|| item.nu_qty_returned ||'",
+              "prc":"'|| item.nu_product_rate ||'",
+              "splyAmt":"'|| item.nu_product_rate*item.nu_qty_returned ||'",
+              "dcRt":"'|| item.NU_DISCOUNT ||'",
+              "dcAmt":"'|| (item.NU_DISCOUNT / 100) * (item.nu_product_rate*item.nu_qty_returned) ||'",
+              "isrccCd":null,
+              "isrccNm":null,
+              "isrcRt":null,
+              "isrcAmt":null,
+              "taxTyCd":"C",
+              "taxblAmt":"'|| item.nu_total ||'",
+              "taxAmt":"0",
+              "totAmt":"'|| item.nu_total ||'"
+          },';
+
+      END IF;
+
+      item_list := item_list || single_item;
+      counter := counter + 1;
+  END LOOP;
+
+
+  IF (payment_mode = 'Cash') THEN
+      payment_type := '01';
+  END IF;
+  
+  IF (payment_mode = 'Credit') THEN
+      payment_type := '02';
+  END IF;
+
+  data := '{
+    "tin":"999976940",'|| chr(10) ||'
+    "bhfId": "00",'|| chr(10) ||'
+    "invcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.vc_grn_no,5,6))) ||'",'|| chr(10) ||'
+    "orgInvcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.vc_invoice_no,5,6))) ||'",'|| chr(10) ||'
+    "custTin":"'|| customer_tin ||'",'|| chr(10) ||'
+    "custNm":"'|| customer_name ||'",'|| chr(10) ||'
+    "salesTyCd":"N",'|| chr(10) ||'
+    "rcptTyCd":"R",'|| chr(10) ||'
+    "pmtTyCd":"'|| payment_type ||'",'|| chr(10) ||'
+    "salesSttsCd":"05",'|| chr(10) ||'
+    "cfmDt":"'|| TO_CHAR(sysdate, 'YYYYMMDDHH24MISS') ||'",'|| chr(10) ||'
+    "salesDt":"'|| TO_CHAR(sysdate, 'YYYYMMDD') ||'",'|| chr(10) ||'
+    "stockRlsDt":"'|| TO_CHAR(sysdate, 'YYYYMMDDHH24MISS') ||'",'|| chr(10) ||'
+    "cnclReqDt":null,'|| chr(10) ||'
+    "cnclDt":null,'|| chr(10) ||'
+    "rfdDt":null,'|| chr(10) ||'
+    "rfdRsnCd":null,'|| chr(10) ||'
+    "totItemCnt":"'|| quantity ||'",
+    "taxblAmtA":"0",
+    "taxblAmtB":"0",
+    "taxblAmtC":"'|| :new.nu_total ||'",
+    "taxblAmtD":"0",
+    "taxRtA":"0",
+    "taxRtB":"0",
+    "taxRtC":"0",
+    "taxRtD":"0",
+    "taxAmtA":"0",
+    "taxAmtB":"0",
+    "taxAmtC":"0",
+    "taxAmtD":"0",
+    "totTaxblAmt":"'|| :new.nu_total ||'",
+    "totTaxAmt":"0",
+    "totAmt":"'|| :new.nu_total ||'",
+    "prchrAcptcYn":"N",
+    "remark":null,
+    "regrId":"Admin",
+    "regrNm":"Admin",
+    "modrId":"Admin",
+    "modrNm":"Admin",
+    "receipt":{
+        "custTin":"'|| customer_tin ||'",'|| chr(10) ||'
+        "custMblNo":"'|| customer_contact ||'",'|| chr(10) ||'
+        "rptNo":null,'|| chr(10) ||'
+        "trdeNm":"'|| customer_trade_name ||'",'|| chr(10) ||'
+        "adrs":"'|| customer_address ||'",'|| chr(10) ||'
+        "topMsg":null,'|| chr(10) ||'
+        "btmMsg":null,'|| chr(10) ||'
+        "prchrAcptcYn":"N"'|| chr(10) ||'
+    },
+    "itemList":['|| item_list ||']
+  }'; 
+  
+  req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  utl_http.set_header(req, 'Content-Length', length(data));
+  
+  utl_http.write_text(req, data);
+  res := utl_http.get_response(req);
+
+  utl_http.read_text(res, res_text);
+  json_obj := json_object_t(res_text);
+  utl_http.end_response(res);
+
+  code :=  json_obj.get_string('resultCd');
+  message :=  json_obj.get_string('resultMsg');
+  res_date :=  json_obj.get_string('resultDt');
+  transaction_data :=  json_obj.get_Object('data');
+  rcptNo :=  transaction_data.get_Number('rcptNo');
+  intrlData :=  transaction_data.get_string('intrlData');
+  rcptSign :=  transaction_data.get_string('rcptSign');
+  totRcptNo :=  transaction_data.get_Number('totRcptNo');
+  vsdcRcptPbctDate :=  transaction_data.get_string('vsdcRcptPbctDate');
+  sdcId :=  transaction_data.get_string('sdcId');
+  mrcNo :=  transaction_data.get_string('mrcNo');
+
+  timestamp :=  json_obj.get_string('timestamp');
+  status :=  json_obj.get_string('status');
+  error :=  json_obj.get_string('error');
+
+  :new.URA_RTN_AFCODE := rcptSign;
+  :new.VC_URA_MSG := message;
+
+  INSERT INTO RRA_NORMAL_SALES_RET_RES (INVOICE_NUMBER, CODE, MSG, DTE, RCPTNO, INTRLDATA, RCPTSIGN, TOTRCPTNO, VSDCRCPTPBCTDATE, SDCID, MRCNO, TIMESTAMP, STATUS, ERROR, JSON)
+  VALUES(TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.vc_grn_no,5,6))), code, message, res_date, rcptNo, intrlData, rcptSign, totRcptNo, vsdcRcptPbctDate, sdcId, timestamp, mrcNo, status, error, data);
+  
+END;

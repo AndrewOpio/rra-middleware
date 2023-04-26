@@ -1,0 +1,201 @@
+CREATE OR REPLACE TRIGGER SAVE_RRA_PURCHASES 
+AFTER INSERT ON RRA_HD_PURCHASES
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data CLOB;
+  res_text  VARCHAR2(32767);
+  json_obj json_object_t;
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  last_req_date VARCHAR2(256);
+
+  item_list  CLOB;
+  item_count NUMBER := 0;
+  single_item  VARCHAR2(32767);
+  quantity NUMBER := 0;
+
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_purchase_transaction';
+
+BEGIN
+
+    SELECT 
+        LAST_REQ_DATE
+    INTO
+        last_req_date
+    FROM
+        RRA_PUR_LAST_REQ_DATE 
+    WHERE 
+        LAST_REQ_DATE >= :new.LAST_REQ_DATE;
+
+    IF last_req_date IS NOT NULL THEN
+        raise_application_error(-20001,'Date already covered.');
+    END IF;
+
+
+    FOR item IN(SELECT * FROM RRA_DT_PURCHASES WHERE SUPPLIERTIN = ;new.SUPPLIERTIN AND SUPPLIERINVOICENUMBER = :new.SUPPLIERINVOICENUMBER AND REQ_DATE = :new.REQ_DATE)
+        LOOP
+          quantity := quantity + 1;
+    END LOOP;
+
+    FOR item IN(
+        SELECT
+            ITEMSEQUENCE,
+            ITEMCODE,
+            ITEMCLASSIFICATIONCODE,
+            ITEMNAME,
+            BARCODE,
+            PACKAGINGUNITCODE,
+            PACKAGE,
+            QUANTITYUNITCODE,
+            QUANTITY,
+            UNITPRICE,
+            SUPPLYAMOUNT,
+            DISCOUNTRATE,
+            DISCOUNTAMOUNT,
+            TAXABLEAMOUNT,
+            TAXATIONTYPECODE,
+            TAXAMOUNT,
+            TOTALAMOUNT
+        FROM
+            RRA_DT_PURCHASES
+        WHERE
+            SUPPLIERTIN = :new.SUPPLIERTIN AND SUPPLIERINVOICENUMBER = :new.SUPPLIERINVOICENUMBER AND REQ_DATE = :new.REQ_DATE)        
+        LOOP
+
+        item_count = item_count + 1;
+
+        IF item_count = quantity THEN
+
+            single_item := '{
+              "itemSeq":"'|| item.ITEMSEQUENCE ||'",
+              "itemCd":"'|| item.ITEMCODE ||'",
+              "itemClsCd":"'|| item.ITEMCLASSIFICATIONCODE ||'",
+              "itemNm":"'|| item.ITEMNAME ||'",
+              "bcd":"'|| item.BARCODE ||'",
+              "spplrItemClsCd":null,
+              "spplrItemCd":"'|| item.ITEMCODE ||'",
+              "spplrItemNm":"'|| item.ITEMNAME ||'",
+              "pkgUnitCd":"'|| item.PACKAGINGUNITCODE ||'",
+              "pkg":"'|| item.PACKAGE ||'",
+              "qtyUnitCd":"'|| item.QUANTITYUNITCODE ||'",
+              "qty":"'|| item.QUANTITY ||'",
+              "prc":"'|| item.UNITPRICE ||'",
+              "splyAmt":"'|| item.SUPPLYAMOUNT ||'",
+              "dcRt":"'|| item.DISCOUNTRATE ||'",
+              "dcAmt":"'|| item.DISCOUNTAMOUNT ||'",
+              "taxblAmt":"'|| item.TAXABLEAMOUNT ||'",
+              "taxTyCd":"'|| item.TAXATIONTYPECODE ||'",
+              "taxAmt":"'|| item.TAXAMOUNT||'",
+              "totAmt":"'|| item.TOTALAMOUNT ||'",
+              "itemExprDt":null
+            }';
+    
+        ELSE
+            single_item := '{
+              "itemSeq":"'|| item.ITEMSEQUENCE ||'",
+              "itemCd":"'|| item.ITEMCODE ||'",
+              "itemClsCd":"'|| item.ITEMCLASSIFICATIONCODE ||'",
+              "itemNm":"'|| item.ITEMNAME ||'",
+              "bcd":"'|| item.BARCODE ||'",
+              "spplrItemClsCd":null,
+              "spplrItemCd":"'|| item.ITEMCODE ||'",
+              "spplrItemNm":"'|| item.ITEMNAME ||'",
+              "pkgUnitCd":"'|| item.PACKAGINGUNITCODE ||'",
+              "pkg":"'|| item.PACKAGE ||'",
+              "qtyUnitCd":"'|| item.QUANTITYUNITCODE ||'",
+              "qty":"'|| item.QUANTITY ||'",
+              "prc":"'|| item.UNITPRICE ||'",
+              "splyAmt":"'|| item.SUPPLYAMOUNT ||'",
+              "dcRt":"'|| item.DISCOUNTRATE ||'",
+              "dcAmt":"'|| item.DISCOUNTAMOUNT ||'",
+              "taxblAmt":"'|| item.TAXABLEAMOUNT ||'",
+              "taxTyCd":"'|| item.TAXATIONTYPECODE ||'",
+              "taxAmt":"'|| item.TAXAMOUNT||'",
+              "totAmt":"'|| item.TOTALAMOUNT ||'",
+              "itemExprDt":null
+            },';
+
+        END IF;
+    
+        item_list := item_list || single_item ;
+        
+    END LOOP;
+    
+    
+    data := '{
+        "tin":"999976940",
+        "bhfId":"00",
+        "invcNo":"'|| :new.SUPPLIERINVOICENUMBER ||'",
+        "orgInvcNo":"'|| :new.SUPPLIERINVOICENUMBER ||'",
+        "spplrTin":"'|| :new.SUPPLIERTIN ||'",
+        "spplrBhfId":"'|| :new.SUPPLIERBHFID ||'",
+        "spplrNm":"'|| :new.SUPPLIERNAME ||'",
+        "spplrInvcNo":"'|| :new.SUPPLIERINVOICENUMBER ||'",
+        "regTyCd":"A",
+        "pchsTyCd":"N",
+        "rcptTyCd":"P",
+        "pmtTyCd":"'|| :new.PAYMENTTYPECODE ||'",
+        "pchsSttsCd":"'|| :new.PURCHASE_STATUS_CODE ||'",
+        "cfmDt":"'|| :new.VALIDATEDDATE ||'",
+        "pchsDt":"'|| :new.SALESDATE ||'",
+        "wrhsDt":"'|| :new.STOCKRELEASEDDATE ||'",
+        "cnclReqDt":null,
+        "cnclDt":null,
+        "rfdDt":null,
+        "totItemCnt":"'|| :new.TOTALITEMCOUNT ||'",
+        "taxblAmtA":"'|| :new.TAXABLEAMOUNTA ||'",
+        "taxblAmtB":"'|| :new.TAXABLEAMOUNTB ||'",
+        "taxblAmtC":"'|| :new.TAXABLEAMOUNTC ||'",
+        "taxblAmtD":"'|| :new.TAXABLEAMOUNTD ||'",
+        "taxRtA":"'|| :new.TAXRATEA ||'",
+        "taxRtB":"'|| :new.TAXRATEB ||'",
+        "taxRtC":"'|| :new.TAXRATEC ||'",
+        "taxRtD":"'|| :new.TAXRATED ||'",
+        "taxAmtA":"'|| :new.TAXAMOUNTA ||'",
+        "taxAmtB":"'|| :new.TAXAMOUNTB ||'",
+        "taxAmtC":"'|| :new.TAXAMOUNTC ||'",
+        "taxAmtD":"'|| :new.TAXAMOUNTD ||'",
+        "totTaxblAmt":"'|| :new.TOTALTAXABLEAMOUNT ||'",
+        "totTaxAmt":"'|| :new.TOTALTAXAMOUNT ||'",
+        "totAmt":"'|| :new.TOTALAMOUNT ||'",
+        "remark":"'|| :new.REMARK ||'", 
+        "regrNm":"Admin",
+        "regrId":"Admin",
+        "modrNm":"Admin",
+        "modrId":"Admin",
+        "itemList":['|| item_list ||']
+    }';
+    
+    req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+    utl_http.set_header(req, 'content-type', 'application/json');
+    utl_http.set_header(req, 'Content-Length', length(data));
+
+    utl_http.write_text(req, data);
+    res := utl_http.get_response(req);
+
+    utl_http.read_text(res, res_text);
+    json_obj := json_object_t(res_text);
+    utl_http.end_response(res);
+
+    code :=  json_obj.get_string('resultCd');
+    message :=  json_obj.get_string('resultMsg');
+    res_date :=  json_obj.get_string('resultDt');
+
+    timestamp :=  json_obj.get_string('timestamp');
+    status :=  json_obj.get_string('status');
+    error :=  json_obj.get_string('error');
+
+    INSERT INTO RRA_PURCHASES_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES (code, message, res_date, timestamp, status, error, data);
+END;
+
+
+
+    
+

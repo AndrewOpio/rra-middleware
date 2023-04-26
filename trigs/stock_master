@@ -1,0 +1,53 @@
+CREATE OR REPLACE TRIGGER SAVE_STOCK_MASTER 
+AFTER INSERT ON STK_LOT_SUMMARY 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/save_stock_master';
+
+BEGIN
+    data := '{
+        "tin":"999976940",
+        "bhfId": "00",
+        "itemCd":"'|| :new.vc_item_code ||'",
+        "rsdQty":"'|| :new.NU_BALANCE_QTY ||'",
+        "regrId":"Admin",
+        "regrNm":"Admin",
+        "modrNm":"Admin",
+        "modrId":"Admin"
+    }';
+    
+    
+    req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+    utl_http.set_header(req, 'content-type', 'application/json');
+    utl_http.set_header(req, 'Content-Length', length(data));
+    
+    utl_http.write_text(req, data);
+    res := utl_http.get_response(req);
+    
+    utl_http.read_text(res, res_text);
+    json_obj := json_object_t(res_text);
+    
+    code :=  json_obj.get_string('resultCd');
+    message :=  json_obj.get_string('resultMsg');
+    res_date :=  json_obj.get_string('resultDt');
+    
+    timestamp :=  json_obj.get_string('timestamp');
+    status :=  json_obj.get_string('status');
+    error :=  json_obj.get_string('error');
+      
+    INSERT INTO RRA_STOCK_MASTER_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES (code, message, res_date, timestamp, status, error, data);  
+    
+    utl_http.end_response(res);
+END;

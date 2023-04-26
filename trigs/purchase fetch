@@ -1,0 +1,288 @@
+create or replace TRIGGER SAVE_PURCHASES 
+AFTER INSERT ON DT_PUR_ORDER 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  req_date varchar2(256);
+  data varchar2(4000);
+  res_text  VARCHAR2(32767);
+  res_text1 CLOB;
+  string VARCHAR2(32767);
+  eob BOOLEAN := false;
+  json_obj json_object_t;
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  pur_data json_object_t;
+  pur_arr json_array_t;
+  item_arr json_array_t;
+  pur_obj json_object_t;
+  item_obj json_object_t;
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+
+  url1 varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/get_purchase_transaction';
+
+BEGIN
+  SELECT
+    DT_ORDER_DATE
+  INTO
+    req_date
+  FROM
+    hd_pur_order
+  WHERE
+    VC_ORDER_NO = :new.VC_ORDER_NO AND DT_ORDER_DATE = :new.DT_ORDER_DATE  AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  data := '{
+    "tin":"999976940",
+    "bhfId":"00",
+    "lastReqDt":"'|| req_date ||'"
+  }';
+
+  req := utl_http.begin_request(url1, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  utl_http.set_header(req, 'Content-Length', length(data));
+  
+  utl_http.write_text(req, data);
+  res := utl_http.get_response(req);
+
+  while not(eob)
+     loop
+       Begin
+         utl_http.read_text(res, string, 32766);         
+         res_text1 := res_text1 || string;
+  
+       Exception
+         when utl_http.end_of_body then
+            eob := true;
+       End;
+  end loop;
+  
+  json_obj := json_object_t(res_text1);
+  utl_http.end_response(res);
+
+  code :=  json_obj.get_string('resultCd');
+  message :=  json_obj.get_string('resultMsg');
+  res_date :=  json_obj.get_string('resultDt');
+
+  IF code IS NOT NULL THEN
+    pur_data := json_obj.get_Object('data');
+
+    IF pur_data IS NOT NULL THEN
+      pur_arr := pur_data.get_Array('saleList');
+
+      FOR i IN 0 .. pur_arr.get_size - 1 LOOP
+          pur_obj := json_object_t(pur_arr.get(i));
+          
+          item_arr := pur_obj.get_Array('itemList');
+    
+          FOR x IN 0 .. item_arr.get_size - 1 LOOP
+            item_obj := json_object_t(item_arr.get(x));
+    
+            /*INSERT INTO RRA_PURCHASES (
+                RESDATE,
+                SUPPLIERTIN,
+                SUPPLIERNAME,
+                SUPPLIERBHFID,
+                SUPPLIERINVOICENUMBER,
+                SUPPLIERSDCID,
+                SUPPLIERMRCNO,
+                RECEIPTTYPECODE,
+                PAYMENTTYPECODE,
+                VALIDATEDDATE,
+                SALESDATE,
+                STOCKRELEASEDDATE,
+                TOTALITEMCOUNT,
+                TAXABLEAMOUNTA,
+                TAXABLEAMOUNTB,
+                TAXABLEAMOUNTC,
+                TAXABLEAMOUNTD,
+                TAXRATEA,
+
+                TAXRATEB,
+                TAXRATEC,
+                TAXRATED,
+                TAXAMOUNTA,
+                TAXAMOUNTB,
+                TAXAMOUNTC,
+                TAXAMOUNTD,
+                TOTALTAXABLEAMOUNT,
+                TOTALTAXAMOUNT,
+                TOTALAMOUNT,
+                REMARK,
+
+                ITEMSEQUENCE,
+                ITEMCODE,
+                ITEMCLASSIFICATIONCODE,
+                ITEMNAME,
+                BARCODE,
+                PACKAGINGUNITCODE,
+                PACKAGE,
+                QUANTITYUNITCODE,
+                QUANTITY,
+                UNITPRICE,
+                SUPPLYAMOUNT,
+                DISCOUNTRATE,
+                DISCOUNTAMOUNT,
+                TAXABLEAMOUNT,
+                TAXATIONTYPECODE,
+                TAXAMOUNT,
+                TOTALAMOUNT2
+            )VALUES (
+                  res_date,
+                  pur_obj.get_string('spplrTin'), 
+                  pur_obj.get_string('spplrNm'),
+                  pur_obj.get_string('spplrBhfId'),
+                  pur_obj.get_Number('spplrInvcNo'),
+                  pur_obj.get_Number('spplrSdcId'),
+                  pur_obj.get_Number('spplrMrcNo'),
+                  pur_obj.get_string('rcptTyCd'),
+                  pur_obj.get_string('pmtTyCd'),
+                  pur_obj.get_string('cfmDt'),
+                  pur_obj.get_string('salesDt'),
+                  pur_obj.get_string('stockRlsDt'),
+                  pur_obj.get_Number('totItemCnt'),
+                  pur_obj.get_Number('taxblAmtA'),
+                  pur_obj.get_Number('taxblAmtB'),
+                  pur_obj.get_Number('taxblAmtC'),
+                  pur_obj.get_Number('taxblAmtD'),
+                  pur_obj.get_Number('taxRtA'),
+                  pur_obj.get_Number('taxRtB'),
+                  pur_obj.get_Number('taxRtC'),
+                  pur_obj.get_Number('taxRtD'),
+                  pur_obj.get_Number('taxAmtA'),
+                  pur_obj.get_Number('taxAmtB'),
+                  pur_obj.get_Number('taxAmtC'),
+                  pur_obj.get_Number('taxAmtD'),
+                  pur_obj.get_Number('totTaxblAmt'),
+                  pur_obj.get_Number('totTaxAmt'),
+                  pur_obj.get_Number('totAmt'),
+                  pur_obj.get_string('remark'),
+
+                  item_obj.get_Number('itemSeq'),
+                  item_obj.get_string('itemCd'),
+                  item_obj.get_string('itemClsCd'),
+                  item_obj.get_string('itemNm'),
+                  item_obj.get_string('bcd'),
+                  item_obj.get_string('pkgUnitCd'),
+                  item_obj.get_Number('pkg'),
+                  item_obj.get_string('qtyUnitCd'),
+                  item_obj.get_Number('qty'),
+                  item_obj.get_Number('prc'),
+                  item_obj.get_Number('splyAmt'),
+                  item_obj.get_Number('dcRt'),
+                  item_obj.get_Number('dcAmt'),
+                  item_obj.get_Number('taxblAmt'),
+                  item_obj.get_Number('taxTyCd'),
+                  item_obj.get_Number('taxAmt'),
+                  item_obj.get_Number('totAmt')
+            );*/
+    
+            data := '{
+                "tin":"999976940",
+                "bhfId":"00",
+                "invcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_order_NO,5,6))) ||'",
+                "orgInvcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_order_NO,5,6))) ||'",
+                "spplrTin":"'|| pur_obj.get_string('spplrTin') ||'",
+                "spplrBhfId":"'|| pur_obj.get_string('spplrBhfId') ||'",
+                "spplrNm":"'|| pur_obj.get_string('spplrNm') ||'",
+                "spplrInvcNo":"'|| pur_obj.get_Number('spplrInvcNo') ||'",
+                "regTyCd":"A",
+                "pchsTyCd":"N",
+                "rcptTyCd":"'|| pur_obj.get_string('rcptTyCd') ||'",
+                "pmtTyCd":"'|| pur_obj.get_string('pmtTyCd') ||'",
+                "pchsSttsCd":"02",
+                "cfmDt":"'|| pur_obj.get_string('cfmDt') ||'",
+                "pchsDt":"'|| pur_obj.get_string('salesDt') ||'",
+                "wrhsDt":"'|| pur_obj.get_string('stockRlsDt') ||'",
+                "cnclReqDt":null,
+                "cnclDt":null,
+                "rfdDt":null,
+                "totItemCnt":"1",
+                "taxblAmtA":"'|| pur_obj.get_Number('taxblAmtA') ||'",
+                "taxblAmtB":"'|| pur_obj.get_Number('taxblAmtB') ||'",
+                "taxblAmtC":"'|| pur_obj.get_Number('taxblAmtC') ||'",
+                "taxblAmtD":"'|| pur_obj.get_Number('taxblAmtD') ||'",
+                "taxRtA":"'|| pur_obj.get_Number('taxRtA') ||'",
+                "taxRtB":"'|| pur_obj.get_Number('taxRtB') ||'",
+                "taxRtC":"'|| pur_obj.get_Number('taxRtC') ||'",
+                "taxRtD":"'|| pur_obj.get_Number('taxRtD') ||'",
+                "taxAmtA":"'|| pur_obj.get_Number('taxAmtA') ||'",
+                "taxAmtB":"'|| pur_obj.get_Number('taxAmtB') ||'",
+                "taxAmtC":"'|| pur_obj.get_Number('taxAmtC') ||'",
+                "taxAmtD":"'|| pur_obj.get_Number('taxAmtD') ||'",
+                "totTaxblAmt":"'|| pur_obj.get_Number('totTaxblAmt') ||'",
+                "totTaxAmt":"'|| pur_obj.get_Number('totTaxAmt') ||'",
+                "totAmt":"'|| pur_obj.get_Number('totAmt') ||'",
+                "remark":"'|| pur_obj.get_string('remark') ||'", 
+                "regrNm":"Admin",
+                "regrId":"Admin",
+                "modrNm":"Admin",
+                "modrId":"Admin",
+    
+                "itemList":[{
+                    "itemSeq":"'|| item_obj.get_Number('itemSeq') ||'",
+                    "itemCd":"'|| item_obj.get_string('itemCd') ||'",
+                    "itemClsCd":"'|| item_obj.get_string('itemClsCd') ||'",
+                    "itemNm":"'|| item_obj.get_string('itemNm') ||'",
+                    "bcd":"'|| item_obj.get_string('bcd') ||'",
+                    "spplrItemClsCd":null,
+                    "spplrItemCd":"'|| item_obj.get_string('itemCd') ||'",
+                    "spplrItemNm":"'|| item_obj.get_string('itemNm') ||'",
+                    "pkgUnitCd":"'|| item_obj.get_string('pkgUnitCd') ||'",
+                    "pkg":"'|| item_obj.get_Number('pkg') ||'",
+                    "qtyUnitCd":"'|| item_obj.get_string('qtyUnitCd') ||'",
+                    "qty":"'|| item_obj.get_Number('qty') ||'",
+                    "prc":"'|| item_obj.get_Number('prc') ||'",
+                    "splyAmt":"'|| item_obj.get_Number('splyAmt') ||'",
+                    "dcRt":"'|| item_obj.get_Number('dcRt') ||'",
+                    "dcAmt":"'|| item_obj.get_Number('dcAmt') ||'",
+                    "taxblAmt":"'|| item_obj.get_Number('taxblAmt') ||'",
+                    "taxTyCd":"'|| item_obj.get_Number('taxTyCd') ||'",
+                    "taxAmt":"'|| item_obj.get_Number('taxAmt') ||'",
+                    "totAmt":"'|| item_obj.get_Number('totAmt') ||'",
+                    "itemExprDt":null
+                }]
+            }';
+    
+            req := utl_http.begin_request(url2, 'POST', 'HTTP/1.1');
+            utl_http.set_header(req, 'content-type', 'application/json');
+            utl_http.set_header(req, 'Content-Length', length(data));
+    
+            utl_http.write_text(req, data);
+            res := utl_http.get_response(req);
+    
+            utl_http.read_text(res, res_text);
+            json_obj := json_object_t(res_text);
+            utl_http.end_response(res);
+
+            code :=  json_obj.get_string('resultCd');
+            message :=  json_obj.get_string('resultMsg');
+            res_date :=  json_obj.get_string('resultDt');
+    
+            timestamp :=  json_obj.get_string('timestamp');
+            status :=  json_obj.get_string('status');
+            error :=  json_obj.get_string('error');
+    
+            INSERT INTO RRA_PURCHASES_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES (code, message, res_date, timestamp, status, error, data);
+          END LOOP;
+      END LOOP;
+    ELSE
+      INSERT INTO RRA_PURCHASES_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+    END IF;
+
+  ELSE
+      timestamp :=  json_obj.get_string('timestamp');
+      status :=  json_obj.get_string('status');
+      error :=  json_obj.get_string('error');
+
+      INSERT INTO RRA_PURCHASES_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+  END IF;
+  
+  utl_http.end_response(res);
+END;
+

@@ -1,0 +1,655 @@
+create or replace TRIGGER SAVE_IMPORTED_ITEMS 
+AFTER INSERT ON DT_PUR_ORDER
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  group_code VARCHAR2(256);
+  classification VARCHAR(256);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  res_text_large  CLOB;
+  string VARCHAR2(32767);
+  eob BOOLEAN := false;
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  imp_data json_object_t;
+  imp_arr json_array_t;
+  imp_obj json_object_t;
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url1 varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/get_imported_items';
+  url2 varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_imported_items';
+
+BEGIN      
+  SELECT
+    VC_GROUP_CODE,
+    VC_CLASSIFICATION
+  INTO
+    group_code,
+    classification
+  FROM
+    sales.mst_product
+  WHERE
+    VC_PRODUCT_CODE = :new.VC_ITEM_CODE AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  IF group_code != 'OTH' THEN
+      data := '{
+         "tin":"999976940",
+         "bhfId": "00",
+         "lastReqDt":"'|| to_char(:new.DT_ORDER_DATE, 'yyyymmddhh24miss') ||'"
+      }';
+
+      req := utl_http.begin_request(url1, 'POST', 'HTTP/1.1');
+      utl_http.set_header(req, 'content-type', 'application/json');
+      utl_http.set_header(req, 'Content-Length', length(data));
+      
+      utl_http.write_text(req, data);
+      res := utl_http.get_response(req);
+      
+      while not(eob)
+         loop
+           Begin
+             utl_http.read_text(res, string, 32766);         
+             res_text_large := res_text_large || string;
+      
+           Exception
+             when utl_http.end_of_body then
+                eob := true;
+           End;
+      end loop;
+      
+      json_obj := json_object_t(res_text_large);
+      utl_http.end_response(res);
+
+      code :=  json_obj.get_string('resultCd');
+      message :=  json_obj.get_string('resultMsg');
+      res_date :=  json_obj.get_string('resultDt');
+
+      IF code IS NOT NULL THEN
+          imp_data := json_obj.get_Object('data');
+    
+          IF imp_data IS NOT NULL THEN
+             imp_arr := imp_data.get_Array('itemList');
+    
+             FOR i IN 0 .. imp_arr.get_size - 1 LOOP
+               imp_obj := json_object_t(imp_arr.get(i));
+                
+                
+               /*INSERT INTO RRA_IMPORTED_ITEMS (
+                RES_DATE,
+                TASK_CODE,
+                DECLARATION_DATE,
+                ITEM_SEQUENCE,
+                DECLARATION_NUMBER,
+                HSCODE,
+                ITEM_NAME,
+                IMPORT_ITEM_STATUS_CODE,
+                ORIGIN_NATION_CODE,
+                EXPORT_NATION_CODE,
+                PACKAGE,
+                PACKAGING_UNIT_CODE,
+                QUANTITY,
+                QUANTITY_UNIT_CODE,
+                GROSS_WEIGHT,
+                NET_WEIGHT,
+                SUPPLIER_NAME,
+                AGENT_NAME,
+                INVOICE_FOREIGN_CURRENCY_AMOUNT,
+                INVOICE_FOREIGN_CURRENCY_CODE,
+                INVOICE_FOREIGN_CURRENCY
+               )VALUES(
+                  res_date,
+                  imp_obj.get_string('taskCd'), 
+                  imp_obj.get_string('dclDe'),
+                  imp_obj.get_Number('itemSeq'),
+                  imp_obj.get_string('dclNo'),
+                  imp_obj.get_string('hsCd'),
+                  imp_obj.get_string('itemNm'),
+                  imp_obj.get_string('imptItemsttsCd'),
+                  imp_obj.get_string('orgnNatCd'),
+                  imp_obj.get_string('exptNatCd'),
+                  imp_obj.get_Number('pkg'),
+                  imp_obj.get_string('pkgUnitCd'),
+                  imp_obj.get_Number('qty'),
+                  imp_obj.get_string('qtyUnitCd'),
+                  imp_obj.get_Number('totWt'),
+                  imp_obj.get_Number('netWt'),
+                  imp_obj.get_string('spplrNm'),
+                  imp_obj.get_string('agntNm'),
+                  imp_obj.get_Number('invcFcurAmt'),
+                  imp_obj.get_string('invcFcurCd'),
+                  imp_obj.get_Number('invcFcurExcrt')
+               );*/
+    
+               data := '{
+                  "tin":"999976940",
+                  "bhfId":"00",
+                  "taskCd":"'|| imp_obj.get_string('taskCd') ||'",
+                  "dclDe":"'|| imp_obj.get_string('dclDe') ||'",
+                  "itemSeq":"'|| imp_obj.get_Number('itemSeq') ||'",
+                  "hsCd":"'|| imp_obj.get_string('hsCd') ||'",
+                  "itemClsCd":"'|| classification ||'",
+                  "itemCd":"'|| :new.VC_ITEM_CODE ||'",
+                  "imptItemSttsCd":"'|| imp_obj.get_string('imptItemsttsCd') ||'",
+                  "remark":null,
+                  "modrNm":"Admin",
+                  "modrId":"Admin" 
+               }';
+    
+               req := utl_http.begin_request(url2, 'POST', 'HTTP/1.1');
+               utl_http.set_header(req, 'content-type', 'application/json');
+               utl_http.set_header(req, 'Content-Length', length(data));
+    
+               utl_http.write_text(req, data);
+               res := utl_http.get_response(req);
+    
+               utl_http.read_text(res, res_text);
+               json_obj := json_object_t(res_text);
+               utl_http.end_response(res);
+
+               code :=  json_obj.get_string('resultCd');
+               message :=  json_obj.get_string('resultMsg');
+               res_date :=  json_obj.get_string('resultDt');
+    
+               timestamp :=  json_obj.get_string('timestamp');
+               status :=  json_obj.get_string('status');
+               error :=  json_obj.get_string('error');
+    
+               INSERT INTO RRA_IMPORTED_ITEMS_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+      
+             END LOOP;
+          ELSE
+              INSERT INTO RRA_IMPORTED_ITEMS_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+          
+          END IF;
+      ELSE
+          timestamp :=  json_obj.get_string('timestamp');
+          status :=  json_obj.get_string('status');
+          error :=  json_obj.get_string('error');
+
+          INSERT INTO RRA_IMPORTED_ITEMS_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+      END IF;
+  END IF;
+
+/*EXCEPTION
+   WHEN OTHERS THEN
+      raise_application_error (-20002,'An error has occurred during execution.');*/
+END;
+
+
+
+create or replace TRIGGER SALES.SAVE_IMPORTS 
+AFTER INSERT ON SALES.MST_PRODUCT 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_imported_items';
+  
+BEGIN      
+  IF :new.VC_GROUP_CODE != 'OTH' THEN
+      data := '{
+        "tin":"999976940",
+        "bhfId":"00",
+        "taskCd":"2231943",
+        "dclDe":"'|| TO_CHAR(:new.DT_MOD_DATE, 'YYYYMMDD') ||'",
+        "itemSeq":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_PRODUCT_CODE,5,6))) ||'",
+        "hsCd":"3004",
+        "itemClsCd":"'|| :new.VC_CLASSIFICATION ||'",
+        "itemCd":"'|| :new.vc_product_code ||'",
+        "imptItemSttsCd":"1",
+        "remark":null,
+        "modrNm":"Admin",
+        "modrId":"Admin"     
+      }';
+-- <Toad_226119700_1> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[--- 1 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[1] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[1] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[1] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[1] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[1] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[1] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[1] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[1] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_1}[1] url = ' || url);
+-- </Toad_226119700_1>
+
+    
+      req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+-- <Toad_226119700_2> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[--- 2 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[2] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[2] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[2] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[2] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[2] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[2] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[2] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[2] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_2}[2] url = ' || url);
+-- </Toad_226119700_2>
+
+      utl_http.set_header(req, 'content-type', 'application/json');
+-- <Toad_226119700_3> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[--- 3 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[3] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[3] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[3] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[3] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[3] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[3] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[3] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[3] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_3}[3] url = ' || url);
+-- </Toad_226119700_3>
+
+      utl_http.set_header(req, 'Content-Length', length(data));
+-- <Toad_226119700_4> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[--- 4 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[4] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[4] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[4] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[4] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[4] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[4] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[4] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[4] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_4}[4] url = ' || url);
+-- </Toad_226119700_4>
+
+      
+      utl_http.write_text(req, data);
+-- <Toad_226119700_5> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[--- 5 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[5] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[5] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[5] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[5] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[5] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[5] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[5] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[5] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_5}[5] url = ' || url);
+-- </Toad_226119700_5>
+
+      res := utl_http.get_response(req);
+-- <Toad_226119700_6> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[--- 6 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[6] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[6] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[6] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[6] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[6] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[6] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[6] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[6] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_6}[6] url = ' || url);
+-- </Toad_226119700_6>
+
+    
+      utl_http.read_text(res, res_text);
+-- <Toad_226119700_7> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[--- 7 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[7] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[7] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[7] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[7] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[7] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[7] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[7] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[7] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_7}[7] url = ' || url);
+-- </Toad_226119700_7>
+
+      json_obj := json_object_t(res_text);
+-- <Toad_226119700_8> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[--- 8 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[8] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[8] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[8] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[8] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[8] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[8] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[8] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[8] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_8}[8] url = ' || url);
+-- </Toad_226119700_8>
+
+      
+      code :=  json_obj.get_string('resultCd');
+-- <Toad_226119700_9> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[--- 9 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[9] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[9] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[9] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[9] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[9] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[9] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[9] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[9] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_9}[9] url = ' || url);
+-- </Toad_226119700_9>
+
+      message :=  json_obj.get_string('resultMsg');
+-- <Toad_226119700_10> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[--- 10 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[10] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[10] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[10] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[10] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[10] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[10] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[10] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[10] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_10}[10] url = ' || url);
+-- </Toad_226119700_10>
+
+      res_date :=  json_obj.get_string('resultDt');
+-- <Toad_226119700_11> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[--- 11 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[11] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[11] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[11] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[11] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[11] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[11] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[11] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[11] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_11}[11] url = ' || url);
+-- </Toad_226119700_11>
+
+    
+      timestamp :=  json_obj.get_string('timestamp');
+-- <Toad_226119700_12> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[--- 12 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[12] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[12] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[12] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[12] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[12] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[12] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[12] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[12] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_12}[12] url = ' || url);
+-- </Toad_226119700_12>
+
+      status :=  json_obj.get_string('status');
+-- <Toad_226119700_13> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[--- 13 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[13] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[13] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[13] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[13] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[13] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[13] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[13] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[13] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_13}[13] url = ' || url);
+-- </Toad_226119700_13>
+
+      error :=  json_obj.get_string('error');
+-- <Toad_226119700_14> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[--- 14 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[14] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[14] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[14] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[14] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[14] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[14] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[14] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[14] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_14}[14] url = ' || url);
+-- </Toad_226119700_14>
+
+      
+      dbms_output.put_line('1'||code||'-'||message||'-'|| res_date||'-'||timestamp ||'-'|| status||'-'||error);
+      
+      INSERT INTO RRA_IMPORTED_ITEMS_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES (code, message, res_date, timestamp, status, error, data);  
+      dbms_output.put_line('2'||code||'-'||message||'-'|| res_date||'-'||timestamp ||'-'|| status||'-'||error);
+      
+      utl_http.end_response(res);
+-- <Toad_226119700_15> *** DO NOT REMOVE THE AUTO DEBUGGER START/END TAGS
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[--- 15 ---]');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15} ');
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[15] data = ' || data);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[15] res_text = ' || res_text);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[15] code = ' || code);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[15] message = ' || message);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[15] res_date = ' || res_date);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[15] timestamp = ' || timestamp);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[15] status = ' || status);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[15] error = ' || error);
+DBMS_OUTPUT.PUT_LINE('{Toad_226119700_15}[15] url = ' || url);
+-- </Toad_226119700_15>
+
+  END IF;
+END;
+
+
+
+
+
+
+CREATE OR REPLACE TRIGGER SALES.SAVE_IMPORTS 
+AFTER INSERT ON SALES.MST_PRODUCT 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  imp_data json_object_t;
+  imp_arr json_array_t;
+  imp_obj json_object_t;
+
+  taskCd VARCHAR2(256); 
+  dclDe VARCHAR2(256);
+  itemSeq NUMBER;
+  dclNo VARCHAR2(256);
+  hsCd VARCHAR2(256);
+  itemNm VARCHAR2(256);
+  imptItemsttsCd VARCHAR2(256);
+  orgnNatCd VARCHAR2(256);
+  exptNatCd VARCHAR2(256);
+  pkg NUMBER;
+  pkgUnitCd VARCHAR2(256);
+  qty NUMBER;
+  qtyUnitCdVARCHAR2(256);
+  totWt NUMBER;
+  netWt NUMBER;
+  spplrNm VARCHAR2(256);
+  agntNm VARCHAR2(256);
+  invcFcurAmt NUMBER;
+  invcFcurCd VARCHAR2(256);
+  invcFcurExcrt NUMBER;
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url1 varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/get_imported_items';
+  url2 varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_imported_items';
+
+BEGIN      
+  IF :new.VC_GROUP_CODE != 'OTH' THEN
+      data varchar2(4000) := '{
+         "tin":"999976940",
+         "bhfId": "00",
+         "lastReqDt":"'|| :new.dt_order_date ||'"
+      }';
+
+      req := utl_http.begin_request(url1, 'POST', 'HTTP/1.1');
+      utl_http.set_header(req, 'content-type', 'application/json');
+      utl_http.set_header(req, 'Content-Length', length(data));
+      
+      utl_http.write_text(req, data);
+      res := utl_http.get_response(req);
+
+      utl_http.read_text(res, res_text);
+      json_obj := json_object_t(res_text);
+
+      code :=  json_obj.get_string('resultCd');
+      message :=  json_obj.get_string('resultMsg');
+      res_date :=  json_obj.get_string('resultDt');
+
+      IF code IS NOT NULL THEN
+      imp_data := json_obj.get_Object('data');
+
+      IF imp_data IS NOT NULL THEN
+         imp_arr := imp_data.get_Array('itemList');
+
+         FOR i IN 0 .. imp_arr.get_size - 1 LOOP
+           imp_obj := json_object_t(imp_arr.get(i));
+            
+              taskCd := imp_obj.get_string('taskCd');
+              dclDe := imp_obj.get_string('dclDe');
+              itemSeq := imp_obj.get_Number('itemSeq');
+              dclNo :=  imp_obj.get_string('dclNo');
+              hsCd := imp_obj.get_string('hsCd');
+              itemNm := imp_obj.get_string('itemNm');
+              imptItemSttsCd := imp_obj.get_string('imptItemsttsCd');
+              orgnNatCd := imp_obj.get_string('orgnNatCd');
+              exptNatCd := imp_obj.get_string('exptNatCd');
+              pkg := imp_obj.get_Number('pkg');
+              pkgUnitCd := imp_obj.get_string('pkgUnitCd');
+              qty := imp_obj.get_Number('qty');
+              qtyUnitCd := imp_obj.get_string('qtyUnitCd');
+              totWt := imp_obj.get_Number('totWt');
+              netWt := imp_obj.get_Number('netWt');
+              spplrNm := imp_obj.get_string('spplrNm');
+              agntNm := imp_obj.get_string('agntNm');
+              invcFcurAmt := imp_obj.get_Number('invcFcurAmt');
+              invcFcurCd := imp_obj.get_string('invcFcurCd');
+              invcFcurExcrt := imp_obj.get_Number('invcFcurExcrt');
+           INSERT INTO RRA_IMPORTED_ITEMS VALUES(
+              res_date,
+              taskCd, 
+              dclDe,
+              itemSeq,
+              dclNo,
+              hsCd,
+              itemNm,
+              imptItemsttsCd,
+              orgnNatCd,
+              exptNatCd,
+              pkg,
+              pkgUnitCd,
+              qty,
+              qtyUnitCd,
+              totWt,
+              netWt,
+              spplrNm,
+              agntNm,
+              invcFcurAmt,
+              invcFcurCd,
+              invcFcurExcrt
+           );
+
+           data varchar2(4000) := '{
+              "tin":"999976940",
+              "bhfId":"00",
+              "taskCd":"'|| imp_obj.get_string('taskCd') ||'",
+              "dclDe":"'|| imp_obj.get_string('dclDe') ||'",
+              "itemSeq":"'|| imp_obj.get_Number('itemSeq') ||'",
+              "hsCd":"'|| imp_obj.get_string('hsCd') ||'",
+              "itemClsCd":"'|| :new.vc_classification ||'",
+              "itemCd":"'|| :new.vc_item_code ||'",
+              "imptItemSttsCd":"'|| imp_obj.get_string('imptItemsttsCd') ||'",
+              "remark":null,
+              "modrNm":"Admin",
+              "modrId":"Admin" 
+           }';
+
+           req := utl_http.begin_request(url2, 'POST', 'HTTP/1.1');
+           utl_http.set_header(req, 'content-type', 'application/json');
+           utl_http.set_header(req, 'Content-Length', length(data));
+
+           utl_http.write_text(req, data);
+           res := utl_http.get_response(req);
+
+           utl_http.read_text(res, res_text);
+           json_obj := json_object_t(res_text);
+            
+           code :=  json_obj.get_string('resultCd');
+           message :=  json_obj.get_string('resultMsg');
+           res_date :=  json_obj.get_string('resultDt');
+
+           timestamp :=  json_obj.get_string('timestamp');
+           status :=  json_obj.get_string('status');
+           error :=  json_obj.get_string('error');
+
+           INSERT INTO RRA_IMPORTED_ITEMS_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+  
+         END LOOP;
+      ELSE
+          INSERT INTO RRA_IMPORTED_ITEMS_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+      
+      END IF;
+      ELSE
+          timestamp :=  json_obj.get_string('timestamp');
+          status :=  json_obj.get_string('status');
+          error :=  json_obj.get_string('error');
+
+          INSERT INTO RRA_IMPORTED_ITEMS_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+      END IF;
+  END IF;
+END;
+
+
+
+
+Aircrafts
+Airports (name, codes)
+Pricing
+
+Fueling stops 
+Booking

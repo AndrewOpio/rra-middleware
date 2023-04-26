@@ -1,0 +1,394 @@
+RW: Country of Origin (Rwanda)
+2: Product Type (Finished Product)
+CT: Packaging Unit (Carton)
+PA: Quantity Unit (packet)  
+itemCd: RW2NTBA0000012
+
+
+  code_id VARCHAR2(30);
+  item_code VARCHAR2(30);
+
+  FOR item IN(
+    SELECT 
+       VC_RRA_COUNTRY,
+       VC_RRA_CARTON,
+       VC_RRA_PACK
+    FROM 
+      MST_PRODUCT)
+    
+    LOOP
+       
+       INSERT INTO RRA_ITEM_CODES (ABACUS_PRODUCT_CODE, COMP_CODE) VALUES (:new.VC_PRODUCT_CODE, :new.VC_COMP_CODE);
+
+       SELECT 
+         lpad(ID, 7, '0')
+       INTO
+         code_id 
+       FROM 
+         RRA_ITEM_CODES
+       WHERE
+         ABACUS_PRODUCT_CODE = item.VC_PRODUCT_CODE AND COMP_CODE = item.VC_COMP_CODE;
+
+       item_code := item.VC_RRA_COUNTRY || "2" || item.VC_RRA_CARTON || item.VC_RRA_PACK || code_id;
+
+       UPDATE RRA_ITEM_CODES SET RRA_PRODUCT_CODE = item_code  WHERE ABACUS_PRODUCT_CODE = item.VC_PRODUCT_CODE AND COMP_CODE = item.VC_COMP_CODE;
+
+    END LOOP;
+
+
+
+/*
+ALTER TABLE RRA_ITEM_CODES ADD ( CONSTRAINT rra_item_codes_pk PRIMARY KEY (COUNTER));
+
+CREATE SEQUENCE rra_snr_sequence;
+
+CREATE OR REPLACE TRIGGER RRA_ITEM_CODES_COUNTER 
+BEFORE INSERT ON RRA_ITEM_CODES 
+
+FOR EACH ROW
+BEGIN
+  SELECT rra_code_sequence.nextval
+  INTO :new.COUNTER
+  FROM dual;
+END;
+
+alter sequence rra_code_sequence restart start with 1;
+
+*/
+
+BEGIN
+    SELECT *  FROM
+       RRA_ITEM_CODES 
+    WHERE 
+       ABACUS_PRODUCT_CODE = :new.VC_PRODUCT_CODE AND COMP_CODE = :new.VC_COMP_CODE;
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+      INSERT INTO RRA_ITEM_CODES (ABACUS_PRODUCT_CODE, COMP_CODE) VALUES (:new.VC_PRODUCT_CODE, :new.VC_COMP_CODE);
+END;
+
+
+
+CREATE OR REPLACE TRIGGER SAVE_ITEM 
+AFTER INSERT ON MST_PRODUCT 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/save_items';
+
+BEGIN
+  data := '{
+    "tin":"999976940",
+    "bhfId": "00",
+    "itemCd":"'|| :new.VC_PRODUCT_CODE ||'",
+    "itemClsCd":"5059690800",
+    "itemTyCd":"2",
+    "itemNm":"'|| :new.VC_PRODUCT_NAME || '",
+    "itemStdNm":"'|| :new.VC_PRODUCT_NAME || '",
+    "orgnNatCd":"IN",
+    "pkgUnitCd":"CT",
+    "qtyUnitCd":"PA",
+    "taxTyCd":"C",
+    "btchNo":null,
+    "bcd":null,
+    "dftPrc":"'|| :new.NU_PRODUCT_RATE || '",
+    "grpPrcL1":"0",
+    "grpPrcL2":"0",
+    "grpPrcL3":"0",
+    "grpPrcL4":"0",
+    "grpPrcL5":"0",
+    "addInfo":null,
+    "sftyQty":"'|| :new.NU_SAFE_QTY || '",
+    "isrcAplcbYn":"N",
+    "useYn":"Y",
+    "regrNm":"Admin",
+    "regrId":"Admin",
+    "modrNm":"Admin",
+    "modrId":"Admin"
+  }';
+
+  req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  utl_http.set_header(req, 'Content-Length', length(data));
+  
+  utl_http.write_text(req, data);
+  res := utl_http.get_response(req);
+
+  utl_http.read_text(res, res_text);
+  json_obj := json_object_t(res_text);
+  
+  code :=  json_obj.get_string('resultCd');
+  message :=  json_obj.get_string('resultMsg');
+  res_date :=  json_obj.get_string('resultDt');
+
+  timestamp :=  json_obj.get_string('timestamp');
+  status :=  json_obj.get_string('status');
+  error :=  json_obj.get_string('error');
+
+  INSERT INTO RRA_ITEM_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+  
+  utl_http.end_response(res);
+END;
+
+
+
+
+
+
+CREATE OR REPLACE TRIGGER SAVE_ITEM_COMPOSITION 
+AFTER INSERT ON MST_PRODUCT 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/save_item_composition';
+
+BEGIN
+  data := '{
+    "tin":"999976940",
+    "bhfId":"00",
+    "itemCd":"'|| :new.VC_PRODUCT_CODE ||'",
+    "cpstItemCd":"'|| :new.VC_PRODUCT_CODE ||'",
+    "cpstQty":"'|| :new.nu_safe_qty ||'",
+    "regrId":"Admin",
+    "regrNm":"Admin"
+  }';
+
+  req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  utl_http.set_header(req, 'Content-Length', length(data));
+  
+  utl_http.write_text(req, data);
+  res := utl_http.get_response(req);
+
+  utl_http.read_text(res, res_text);
+  json_obj := json_object_t(res_text);
+  
+  code :=  json_obj.get_string('resultCd');
+  message :=  json_obj.get_string('resultMsg');
+  res_date :=  json_obj.get_string('resultDt');
+
+  timestamp :=  json_obj.get_string('timestamp');
+  status :=  json_obj.get_string('status');
+  error :=  json_obj.get_string('error');
+
+  INSERT INTO RRA_ITEM_COMPOSITION_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+  
+  utl_http.end_response(res);
+END;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CREATE OR REPLACE TRIGGER SAVE_ITEM 
+BEFORE INSERT OR UPDATE ON MST_PRODUCT 
+
+for each row
+DISABLE
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  
+  code_id VARCHAR2(30);
+  item_code VARCHAR2(30);
+  rra_product_code VARCHAR2(30);
+
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/save_items';
+
+BEGIN
+   BEGIN
+      SELECT 
+        RRA_PRODUCT_CODE
+      INTO
+        rra_product_code
+      FROM
+        RRA_ITEM_CODES 
+      WHERE 
+        ABACUS_PRODUCT_CODE = :new.VC_PRODUCT_CODE;
+    
+     :new.VC_RRA_PRODUCT_CODE := rra_product_code;
+
+   EXCEPTION
+     WHEN NO_DATA_FOUND THEN
+       INSERT INTO RRA_ITEM_CODES (ABACUS_PRODUCT_CODE, COMP_CODE) VALUES (:new.VC_PRODUCT_CODE, :new.VC_COMP_CODE);
+   
+       SELECT 
+         lpad(COUNTER, 7, '0')
+       INTO
+         code_id 
+       FROM 
+         RRA_ITEM_CODES
+       WHERE
+         ABACUS_PRODUCT_CODE = :new.VC_PRODUCT_CODE AND COMP_CODE = :new.VC_COMP_CODE;
+    
+       item_code := :new.VC_RRA_COUNTRY || '2' || :new.VC_RRA_CARTON || :new.VC_RRA_PACK || code_id;
+       :new.VC_RRA_PRODUCT_CODE := item_code;
+       
+       UPDATE RRA_ITEM_CODES SET RRA_PRODUCT_CODE = item_code  WHERE ABACUS_PRODUCT_CODE = :new.VC_PRODUCT_CODE AND COMP_CODE = :new.VC_COMP_CODE;
+   END;
+   
+   
+  data := '{
+    "tin":"999976940",'|| chr(10) ||'
+    "bhfId": "00",'|| chr(10) ||'
+    "itemCd":"'|| item_code ||'",'|| chr(10) ||'
+    "itemClsCd":"80141700",'|| chr(10) ||'
+    "itemTyCd":"2",'|| chr(10) ||'
+    "itemNm":"'|| :new.VC_PRODUCT_NAME || '",'|| chr(10) ||'
+    "itemStdNm":"'|| :new.VC_PRODUCT_NAME || '",'|| chr(10) ||'
+    "orgnNatCd":"'|| :new.VC_RRA_COUNTRY ||'",'|| chr(10) ||'
+    "pkgUnitCd":"'|| :new.VC_RRA_CARTON ||'",'|| chr(10) ||'
+    "qtyUnitCd":"'|| :new.VC_RRA_PACK ||'",'|| chr(10) ||'
+    "taxTyCd":"C",'|| chr(10) ||'
+    "btchNo":null,'|| chr(10) ||'
+    "bcd":null,'|| chr(10) ||'
+    "dftPrc":"'|| :new.NU_PRODUCT_RATE || '",
+    "grpPrcL1":"0",
+    "grpPrcL2":"0",
+    "grpPrcL3":"0",
+    "grpPrcL4":"0",
+    "grpPrcL5":"0",
+    "addInfo":null,
+    "sftyQty":"'|| :new.NU_SAFE_QTY || '",
+    "isrcAplcbYn":"N",
+    "useYn":"Y",
+    "regrNm":"Admin",
+    "regrId":"Admin",
+    "modrNm":"Admin",
+    "modrId":"Admin"
+  }';
+
+  req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  utl_http.set_header(req, 'Content-Length', length(data));
+  
+  utl_http.write_text(req, data);
+  res := utl_http.get_response(req);
+
+  utl_http.read_text(res, res_text);
+  json_obj := json_object_t(res_text);
+  utl_http.end_response(res);
+
+  code :=  json_obj.get_string('resultCd');
+  message :=  json_obj.get_string('resultMsg');
+  res_date :=  json_obj.get_string('resultDt');
+
+  timestamp :=  json_obj.get_string('timestamp');
+  status :=  json_obj.get_string('status');
+  error :=  json_obj.get_string('error');
+
+  INSERT INTO RRA_ITEM_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES (code, message, res_date, timestamp, status, error, data);
+  
+END;
+
+
+
+
+
+
+CREATE OR REPLACE TRIGGER SAVE_ITEM_COMPOSITION 
+AFTER INSERT OR UPDATE ON MST_PRODUCT 
+
+for each row
+DISABLE
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  code  VARCHAR2(256);
+  message  VARCHAR2(1000);
+  res_date  VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/save_item_composition';
+
+BEGIN
+  data := '{
+    "tin":"999976940",'|| chr(10) ||'
+    "bhfId":"00",'|| chr(10) ||'
+    "itemCd":"'|| :new.VC_PRODUCT_CODE ||'",'|| chr(10) ||'
+    "cpstItemCd":"'|| :new.VC_PRODUCT_CODE ||'",'|| chr(10) ||'
+    "cpstQty":"'|| :new.nu_safe_qty ||'",
+    "regrId":"Admin",
+    "regrNm":"Admin"
+  }';
+
+  req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  utl_http.set_header(req, 'Content-Length', length(data));
+  
+  utl_http.write_text(req, data);
+  res := utl_http.get_response(req);
+
+  utl_http.read_text(res, res_text);
+  json_obj := json_object_t(res_text);
+  utl_http.end_response(res);
+
+  code :=  json_obj.get_string('resultCd');
+  message :=  json_obj.get_string('resultMsg');
+  res_date :=  json_obj.get_string('resultDt');
+
+  timestamp :=  json_obj.get_string('timestamp');
+  status :=  json_obj.get_string('status');
+  error :=  json_obj.get_string('error');
+
+  INSERT INTO RRA_ITEM_COMPOSITION_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES(code, message, res_date, timestamp, status, error, data);
+  
+END;
